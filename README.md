@@ -166,11 +166,56 @@ Scan completed (exit code 0) but nothing appears in the console:
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a detailed breakdown of the components, IAM design, authentication flow, and network requirements.
 
+## Bulk scanning
+
+`scan-all.sh` scans every tagged ECR image in your account pushed within a given age window, running scans in parallel batches.
+
+```bash
+# Scan everything pushed in the last year (default)
+./scan-all.sh
+
+# Last 30 days only, 5 scans at a time
+./scan-all.sh --max-age-days 30 --batch-size 5
+
+# Preview what would be scanned without invoking anything
+./scan-all.sh --dry-run
+
+# Scan all tagged images regardless of age
+./scan-all.sh --max-age-days 36500
+```
+
+Edit the CONFIG block at the top of `scan-all.sh` the same way as `deploy.sh` - set your account ID, subnet, security group, and region. Output shows per-image pass/fail with timing, batch progress, and a final summary:
+
+```
+Found 24 images across 8 repositories
+Batch size: 10 | Batches: 3 | Max age: 365 days
+
+--- Batch 1/3 (images 1-10) ---
+  [  1/24] my-app:v1.2.3                                          launched
+  [  2/24] my-app:v1.2.2                                          launched
+  ...
+  Waiting for batch 1/3...
+  [  1/24] my-app:v1.2.3                                          SUCCESS  (58s)
+  [  2/24] my-app:v1.2.2                                          SUCCESS  (61s)
+  ...
+  Batch 1/3 done: 10 passed, 0 failed
+  Progress: 10/24 scanned (41%) | passed: 10 | failed: 0
+
+==============================
+ Scan complete
+ Total:    24
+ Passed:   23
+ Failed:    1
+ Duration: 4m 12s
+==============================
+```
+
 ## Repository structure
 
 ```
 deploy.sh                            - deploys the complete solution (edit CONFIG block first)
 test.sh                              - invokes a scan directly for testing
+scan-all.sh                          - bulk-scans all ECR images in the account
 iam/
   lambda-trust-policy.json           - trust policy for the Lambda IAM role
   lambda-policy.json                 - permissions for both Lambdas (single consolidated policy)
