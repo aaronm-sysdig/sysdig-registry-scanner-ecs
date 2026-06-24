@@ -1,0 +1,102 @@
+{
+  "family": "Sysdig-Registry-Scanner",
+  "taskRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole",
+  "executionRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "containerDefinitions": [
+    {
+      "name": "registry-scanner",
+      "image": "quay.io/sysdig/registry-scanner:job-0.10.2",
+      "essential": true,
+      "command": ["--scan_runner=sbom-exporter"],
+      "environment": [
+        {
+          "name": "REGISTRYSCANNER_REGISTRY_SKIPTLS",
+          "value": "false"
+        },
+        {
+          "name": "REGISTRYSCANNER_CONFIG_AWS_MANAGEMENTACCOUNTROLEARN",
+          "value": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole"
+        },
+        {
+          "name": "SHOW_USAGE",
+          "value": "true"
+        },
+        {
+          "name": "REGISTRYSCANNER_SCAN_IMAGEANALYZER_MAXFILESIZEBYTES",
+          "value": "104857600"
+        },
+        {
+          "name": "REGISTRYSCANNER_SCAN_WORKERS",
+          "value": "1"
+        },
+        {
+          "name": "REGISTRYSCANNER_SCAN_IMAGEANALYZER_MAXFILESIZEBYTESINMEMORY",
+          "value": "5242880"
+        },
+        {
+          "name": "AWS_DEFAULT_REGION",
+          "value": "{{REGION}}"
+        },
+        {
+          "name": "REGISTRYSCANNER_SECURE_SKIPTLS",
+          "value": "true"
+        },
+        {
+          "name": "REGISTRYSCANNER_CRONJOB_SCHEDULE",
+          "value": "0 6 * * 6"
+        },
+        {
+          "name": "REGISTRYSCANNER_SCAN_IMAGEANALYZER_PARALLELFILEANALYSISCOUNT",
+          "value": "15"
+        },
+        {
+          "name": "REGISTRYSCANNER_REGISTRY_API",
+          "value": "{{ECR_REGISTRY_URL}}"
+        },
+        {
+          "name": "REGISTRYSCANNER_REGISTRY_URL",
+          "value": "{{ECR_REGISTRY_URL}}"
+        },
+        {
+          "name": "REGISTRYSCANNER_REGISTRY_TYPE",
+          "value": "ecr"
+        },
+        {
+          "name": "REGISTRYSCANNER_SECURE_ONPREM",
+          "value": "false"
+        },
+        {
+          "name": "REGISTRYSCANNER_LOGGING",
+          "value": "debug"
+        },
+        {
+          "name": "REGISTRYSCANNER_FILTER_IMAGELIST",
+          "value": "placeholder-will-be-overridden"
+        },
+        {
+          "name": "REGISTRYSCANNER_SECURE_BASEURL",
+          "value": "{{SYSDIG_API_URL}}"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "REGISTRYSCANNER_SECURE_APITOKEN",
+          "valueFrom": "arn:aws:secretsmanager:{{REGION}}:{{ACCOUNT_ID}}:secret:{{SECRET_NAME}}"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/Sysdig-Registry-Scanner",
+          "awslogs-create-group": "true",
+          "awslogs-region": "{{REGION}}",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
