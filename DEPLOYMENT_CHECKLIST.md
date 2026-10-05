@@ -43,7 +43,7 @@ Use this when deploying to a customer environment.
 - [ ] IAM role: `ecsTaskExecutionRole`
 - [ ] ECS cluster: as configured in `deploy.sh`
 - [ ] ECS task definition: `Sysdig-Registry-Scanner` (latest revision)
-- [ ] Lambda: `run-registry-scan` (timeout: 300s)
+- [ ] Lambda: `run-registry-scan` (timeout: 900s)
 - [ ] Lambda: `ecr-push-trigger` (timeout: 60s)
 - [ ] EventBridge rule: `ecr-push-trigger-scanner` (ENABLED, target: `ecr-push-trigger`)
 

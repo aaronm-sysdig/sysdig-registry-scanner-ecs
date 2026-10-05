@@ -15,10 +15,10 @@ Lambda: ecr-push-trigger       [60s timeout]
     |  extracts image ref from event
     |  invokes orchestrator asynchronously
     v
-Lambda: run-registry-scan      [300s timeout]
+Lambda: run-registry-scan      [900s timeout]
     |  gets ECR auth token (short-lived)
     |  launches one-shot Fargate task
-    |  waits up to 15 min for task to stop
+    |  waits up to ~14 min for task to stop
     |  returns exit code 0 (success) / 1 (failure)
     v
 ECS Fargate task: Sysdig-Registry-Scanner
@@ -46,7 +46,7 @@ Environment variables (set by `deploy.sh`):
 
 ### Lambda: run-registry-scan
 
-The orchestrator. Receives the image reference from the trigger, generates a short-lived ECR auth token using its own IAM role, launches the Fargate scanner task with credentials and the image name passed as environment overrides, then waits (polling every 10 seconds, up to 15 minutes) for the task to stop. Returns the task's exit code as the scan result.
+The orchestrator. Receives the image reference from the trigger, generates a short-lived ECR auth token using its own IAM role, launches the Fargate scanner task with credentials and the image name passed as environment overrides, then waits (polling every 10 seconds, up to about 14 minutes) for the task to stop. Returns the task's exit code as the scan result.
 
 Input payload:
 ```json

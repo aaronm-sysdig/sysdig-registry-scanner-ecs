@@ -147,7 +147,7 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
       --cli-binary-format raw-in-base64-out \
       --region "$REGION" \
       --cli-read-timeout 1200 \
-      "$TMPFILE" >/dev/null 2>&1 &
+      "$TMPFILE" >/dev/null 2>"${TMPFILE}.err" &
 
     BATCH_PIDS["$IMAGE"]=$!
     echo "launched"
@@ -165,8 +165,19 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
     TMPFILE="${BATCH_FILES[$IMAGE]}"
     LABEL=$(( OFFSET + $(( $(printf '%s\n' "${BATCH_IMAGES[@]}" | grep -n "^${IMAGE}$" | cut -d: -f1) - 1 )) + 1 ))
     ELAPSED=$(( $(date +%s) - ${BATCH_TIMES[$IMAGE]} ))
-    STATUS=$(jq -r '.statusCode' "$TMPFILE" 2>/dev/null || echo "error")
-    rm -f "$TMPFILE"
+    # Read everything we need before deleting the response file.
+    STATUS=$(jq -r '.statusCode // "none"' "$TMPFILE" 2>/dev/null || echo "none")
+    # The Lambda returns {statusCode, body}. If the Lambda itself fails (for
+    # example a timeout) there is no body, only an errorMessage.
+    MSG=$(jq -r 'if .body then (.body | fromjson | (.message // .error // "unknown"))
+                 else (.errorMessage // "no response from Lambda") end' "$TMPFILE" 2>/dev/null \
+          || echo "response not readable")
+    MSG="${MSG:-no response from Lambda}"
+    DETAIL=$(jq -r 'if .body then (.body | fromjson
+                 | [(.stopped_reason // empty), (.error // empty)] | join(" ")) else "" end' \
+          "$TMPFILE" 2>/dev/null || true)
+    CLI_ERR=$(tr '\n' ' ' < "${TMPFILE}.err" 2>/dev/null | cut -c1-300)
+    rm -f "$TMPFILE" "${TMPFILE}.err"
 
     printf "  [%3d/%-3d] %-55s" "$LABEL" "$TOTAL" "$IMAGE"
 
@@ -182,8 +193,8 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
         (( BATCH_FAIL++ )) || true
         ;;
       *)
-        MSG=$(jq -r '.body | fromjson | .message // .error // "unknown"' "${BATCH_FILES[$IMAGE]}" 2>/dev/null || echo "unknown")
-        printf "FAILED   (%ds) - %s\n" "$ELAPSED" "$MSG"
+        printf "FAILED   (%ds) - %s%s%s\n" "$ELAPSED" "$MSG" \
+          "${DETAIL:+ [$DETAIL]}" "${CLI_ERR:+ (aws cli: $CLI_ERR)}"
         (( FAIL++      )) || true
         (( BATCH_FAIL++ )) || true
         ;;

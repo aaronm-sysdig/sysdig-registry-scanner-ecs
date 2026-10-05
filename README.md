@@ -95,7 +95,7 @@ This invokes the orchestrator Lambda directly with a specific image and waits fo
 |---|---|
 | IAM role (Lambdas) | `lambda-registry-scanner-role` |
 | IAM role (Fargate task) | `ecsTaskExecutionRole` |
-| Lambda | `run-registry-scan` (timeout: 300s) |
+| Lambda | `run-registry-scan` (timeout: 900s) |
 | Lambda | `ecr-push-trigger` (timeout: 60s) |
 | ECS cluster | `Sysdig-Fargate-Test-Cluster` (configurable) |
 | ECS task definition | `Sysdig-Registry-Scanner` |
@@ -155,7 +155,7 @@ Common causes: ECR auth error, image not found, no network route to Sysdig API, 
 
 ### Lambda times out (202 response)
 
-The orchestrator waits up to 15 minutes for the task to stop. A 202 means the task started but the waiter hit its limit - the scan may still be running. Check ECS:
+The orchestrator waits up to about 14 minutes for the task to stop. A 202 means the task started but the waiter hit its limit - the scan may still be running. Check ECS:
 ```bash
 aws ecs list-tasks --cluster Sysdig-Fargate-Test-Cluster --region YOUR_REGION
 aws logs tail /ecs/Sysdig-Registry-Scanner --since 30m --region YOUR_REGION

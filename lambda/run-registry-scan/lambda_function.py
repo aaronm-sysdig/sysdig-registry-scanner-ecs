@@ -67,12 +67,12 @@ def lambda_handler(event, context):
         task_id = task_arn.split('/')[-1]
         print(f'Task launched: {task_id}')
 
-        # 3. Wait for the task to stop (up to 15 minutes).
+        # 3. Wait for the task to stop (up to ~14 minutes, inside the Lambda's 15 minute timeout).
         try:
             ecs.get_waiter('tasks_stopped').wait(
                 cluster=cluster,
                 tasks=[task_arn],
-                WaiterConfig={'Delay': 10, 'MaxAttempts': 90},
+                WaiterConfig={'Delay': 10, 'MaxAttempts': 85},
             )
         except Exception as wait_error:
             print(f'Timed out waiting for task: {wait_error}')

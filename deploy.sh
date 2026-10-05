@@ -211,9 +211,15 @@ else
     --runtime python3.11 --handler lambda_function.lambda_handler \
     --role "arn:aws:iam::${ACCOUNT_ID}:role/${LAMBDA_ROLE}" \
     --zip-file fileb:///tmp/run-registry-scan.zip \
-    --timeout 300 --memory-size 128 >/dev/null
+    --timeout 900 --memory-size 128 >/dev/null
   echo "  created"
 fi
+aws lambda wait function-updated --function-name run-registry-scan
+# The Lambda waits for the scan task to finish (up to ~14 minutes), so it needs
+# the maximum 15 minute timeout. Set it on every run so older deployments that
+# were created with a shorter timeout are corrected too.
+aws lambda update-function-configuration --function-name run-registry-scan \
+  --timeout 900 >/dev/null
 aws lambda wait function-updated --function-name run-registry-scan
 echo
 

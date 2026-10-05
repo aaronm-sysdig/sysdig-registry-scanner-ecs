@@ -92,7 +92,7 @@ Common causes:
 
 **Symptom:** `run-registry-scan` returns HTTP 202 instead of 200.
 
-The orchestrator waits up to 15 minutes for the Fargate task to stop. A 202 means the task was launched but the waiter timed out before it finished. The scan may still be running.
+The orchestrator waits up to about 14 minutes for the Fargate task to stop. A 202 means the task was launched but the waiter timed out before it finished. The scan may still be running.
 
 Check:
 ```bash
@@ -103,7 +103,7 @@ aws ecs list-tasks --cluster Sysdig-Fargate-Test-Cluster --region YOUR_REGION
 aws logs tail /ecs/Sysdig-Registry-Scanner --since 30m --region YOUR_REGION
 ```
 
-Very large images (multi-GB) can take longer than 15 minutes. In that case the scan completes and sends results to Sysdig even though the Lambda already returned 202.
+Very large images (multi-GB) can take longer than 14 minutes. In that case the scan completes and sends results to Sysdig even though the Lambda already returned 202.
 
 ---
 
