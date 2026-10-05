@@ -44,6 +44,38 @@ if ! SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$SECRET_NAME" 
   exit 1
 fi
 echo "  ${SECRET_ARN}"
+
+# ECS injects the whole secret string into the container. If the secret is a
+# key/value pair (the console default), that would send the raw JSON to Sysdig
+# as the token and fail with a 401. ECS can extract one key via
+# "<arn>:<key>::", so find the first key and point the task at it. The value
+# is never printed.
+SECRET_VALUE_FROM="$SECRET_ARN"
+if SECRET_STRING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" \
+      --region "$REGION" --query SecretString --output text 2>/dev/null); then
+  SECRET_KEY=$(printf '%s' "$SECRET_STRING" | jq -r \
+    'if type == "object" then (keys_unsorted[0] // empty) else empty end' 2>/dev/null || true)
+  SECRET_KEY_COUNT=$(printf '%s' "$SECRET_STRING" | jq -r \
+    'if type == "object" then length else 0 end' 2>/dev/null || echo 0)
+  if [ -n "$SECRET_KEY" ]; then
+    if ! [[ "$SECRET_KEY" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+      echo "  ERROR: the first key in the secret has characters this script cannot pass to ECS."
+      echo "         Store the token as plain text, or use a key made of letters, digits, _ . -"
+      exit 1
+    fi
+    SECRET_VALUE_FROM="${SECRET_ARN}:${SECRET_KEY}::"
+    echo "  secret is key/value: using key '${SECRET_KEY}'"
+    if [ "$SECRET_KEY_COUNT" -gt 1 ]; then
+      echo "  WARNING: the secret has ${SECRET_KEY_COUNT} keys; using the first ('${SECRET_KEY}')"
+    fi
+  else
+    echo "  secret is plain text"
+  fi
+else
+  echo "  WARNING: could not read the secret value (needs secretsmanager:GetSecretValue)."
+  echo "           Assuming it is plain text. If it is key/value, scans will fail with a 401."
+fi
+unset SECRET_STRING
 echo
 
 # ---------------------------------------------------------------------------
@@ -158,7 +190,7 @@ sed -e "s|{{ACCOUNT_ID}}|${ACCOUNT_ID}|g" \
     -e "s|{{REGION}}|${REGION}|g" \
     -e "s|{{SYSDIG_API_URL}}|${SYSDIG_API_URL}|g" \
     -e "s|{{ECR_REGISTRY_URL}}|${REGISTRY_URL}|g" \
-    -e "s|{{SECRET_ARN}}|${SECRET_ARN}|g" \
+    -e "s|{{SECRET_VALUE_FROM}}|${SECRET_VALUE_FROM}|g" \
     ecs/task-definition-template.json > /tmp/task-definition.json
 
 aws ecs register-task-definition --cli-input-json file:///tmp/task-definition.json >/dev/null

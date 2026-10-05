@@ -85,7 +85,7 @@
       "secrets": [
         {
           "name": "REGISTRYSCANNER_SECURE_APITOKEN",
-          "valueFrom": "{{SECRET_ARN}}"
+          "valueFrom": "{{SECRET_VALUE_FROM}}"
         }
       ],
       "logConfiguration": {

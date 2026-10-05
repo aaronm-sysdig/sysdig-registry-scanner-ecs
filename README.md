@@ -36,6 +36,12 @@ aws secretsmanager create-secret \
     --region YOUR_REGION
 ```
 
+The secret can have any name; set `SECRET_NAME` in the next step to match. It can
+hold the token as plain text (above) or as a key/value pair, which is the
+Secrets Manager console default. For key/value secrets, `deploy.sh` uses the
+first key, whatever it is called. This needs `jq` and
+`secretsmanager:GetSecretValue` on the machine running `deploy.sh`.
+
 ### 2. Edit the config block in deploy.sh
 
 Open `deploy.sh` and update the CONFIG section at the top:
