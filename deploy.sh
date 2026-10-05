@@ -34,6 +34,19 @@ echo "Deploying to account ${ACCOUNT_ID} in ${REGION}"
 echo
 
 # ---------------------------------------------------------------------------
+echo "Step 0: look up the Sysdig API token secret (${SECRET_NAME})"
+# ---------------------------------------------------------------------------
+# Secrets Manager appends a random suffix to every secret ARN, and ECS needs
+# the full ARN, so resolve it rather than building it from the name.
+if ! SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$SECRET_NAME" \
+      --region "$REGION" --query ARN --output text); then
+  echo "  ERROR: secret '${SECRET_NAME}' not found in ${REGION}. Create it first (see README)."
+  exit 1
+fi
+echo "  ${SECRET_ARN}"
+echo
+
+# ---------------------------------------------------------------------------
 echo "Step 1: ECS task execution role (${TASK_ROLE})"
 # ---------------------------------------------------------------------------
 if ! aws iam get-role --role-name "$TASK_ROLE" >/dev/null 2>&1; then
@@ -101,7 +114,7 @@ aws iam put-role-policy --role-name "$TASK_ROLE" --policy-name read-sysdig-token
     \"Statement\": [{
       \"Effect\": \"Allow\",
       \"Action\": \"secretsmanager:GetSecretValue\",
-      \"Resource\": \"arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRET_NAME}*\"
+      \"Resource\": \"${SECRET_ARN}\"
     }]
   }"
 echo "  policies attached"
@@ -145,7 +158,7 @@ sed -e "s|{{ACCOUNT_ID}}|${ACCOUNT_ID}|g" \
     -e "s|{{REGION}}|${REGION}|g" \
     -e "s|{{SYSDIG_API_URL}}|${SYSDIG_API_URL}|g" \
     -e "s|{{ECR_REGISTRY_URL}}|${REGISTRY_URL}|g" \
-    -e "s|{{SECRET_NAME}}|${SECRET_NAME}|g" \
+    -e "s|{{SECRET_ARN}}|${SECRET_ARN}|g" \
     ecs/task-definition-template.json > /tmp/task-definition.json
 
 aws ecs register-task-definition --cli-input-json file:///tmp/task-definition.json >/dev/null

@@ -85,7 +85,7 @@
       "secrets": [
         {
           "name": "REGISTRYSCANNER_SECURE_APITOKEN",
-          "valueFrom": "arn:aws:secretsmanager:{{REGION}}:{{ACCOUNT_ID}}:secret:{{SECRET_NAME}}"
+          "valueFrom": "{{SECRET_ARN}}"
         }
       ],
       "logConfiguration": {
