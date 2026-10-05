@@ -1,13 +1,17 @@
 import json
 import base64
 import boto3
+from botocore.config import Config
 
 # Orchestrator Lambda.
 # Generates a short-lived ECR token, launches the Sysdig scanner as a one-shot
 # Fargate task, waits for it to finish, and reports the result.
 
-ecr = boto3.client('ecr')
-ecs = boto3.client('ecs')
+# Bulk scans launch many tasks at once; retry API throttling patiently instead
+# of failing the scan after a few seconds.
+_retry = Config(retries={'max_attempts': 10, 'mode': 'adaptive'})
+ecr = boto3.client('ecr', config=_retry)
+ecs = boto3.client('ecs', config=_retry)
 
 
 def lambda_handler(event, context):
@@ -63,6 +67,19 @@ def lambda_handler(event, context):
                 }]
             },
         )
+        if not run.get('tasks'):
+            # RunTask can succeed as an API call yet start nothing (for example
+            # no Fargate capacity); the reason is in 'failures'.
+            reasons = '; '.join(
+                f"{f.get('reason', 'unknown')} {f.get('detail', '')}".strip()
+                for f in run.get('failures', [])
+            ) or 'no reason given'
+            print(f'RunTask started no task: {reasons}')
+            return _response(500, {
+                'success': False,
+                'image_to_scan': full_image,
+                'error': f'ECS RunTask did not start a task: {reasons}',
+            })
         task_arn = run['tasks'][0]['taskArn']
         task_id = task_arn.split('/')[-1]
         print(f'Task launched: {task_id}')
