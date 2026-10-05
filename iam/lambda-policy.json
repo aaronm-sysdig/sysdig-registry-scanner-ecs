@@ -10,7 +10,9 @@
         "logs:PutLogEvents"
       ],
       "Resource": [
+        "arn:aws:logs:*:*:log-group:/aws/lambda/run-registry-scan",
         "arn:aws:logs:*:*:log-group:/aws/lambda/run-registry-scan:*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/ecr-push-trigger",
         "arn:aws:logs:*:*:log-group:/aws/lambda/ecr-push-trigger:*"
       ]
     },

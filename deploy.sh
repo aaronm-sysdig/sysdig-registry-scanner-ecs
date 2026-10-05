@@ -45,11 +45,54 @@ else
   echo "  already exists"
 fi
 
+# The scanner assumes this same role (REGISTRYSCANNER_CONFIG_AWS_MANAGEMENTACCOUNTROLEARN),
+# so the role must trust itself. The role has to exist first to be named as a
+# principal. Note this replaces the whole trust policy, including on a reused role.
+aws iam update-assume-role-policy --role-name "$TASK_ROLE" --policy-document "{
+  \"Version\": \"2012-10-17\",
+  \"Statement\": [
+    {
+      \"Effect\": \"Allow\",
+      \"Principal\": {\"Service\": \"ecs-tasks.amazonaws.com\"},
+      \"Action\": \"sts:AssumeRole\"
+    },
+    {
+      \"Effect\": \"Allow\",
+      \"Principal\": {\"AWS\": \"arn:aws:iam::${ACCOUNT_ID}:role/${TASK_ROLE}\"},
+      \"Action\": \"sts:AssumeRole\"
+    }
+  ]
+}"
+aws iam put-role-policy --role-name "$TASK_ROLE" --policy-name assume-self \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Effect\": \"Allow\",
+      \"Action\": \"sts:AssumeRole\",
+      \"Resource\": \"arn:aws:iam::${ACCOUNT_ID}:role/${TASK_ROLE}\"
+    }]
+  }"
+
 # Pull images and write task logs.
 aws iam attach-role-policy --role-name "$TASK_ROLE" \
   --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 aws iam attach-role-policy --role-name "$TASK_ROLE" \
   --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+# The task definition sets awslogs-create-group=true, and the managed policy
+# above does not include logs:CreateLogGroup.
+aws iam put-role-policy --role-name "$TASK_ROLE" --policy-name create-scanner-log-group \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Effect\": \"Allow\",
+      \"Action\": \"logs:CreateLogGroup\",
+      \"Resource\": [
+        \"arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:/ecs/Sysdig-Registry-Scanner\",
+        \"arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:/ecs/Sysdig-Registry-Scanner:*\"
+      ]
+    }]
+  }"
 
 # Read the Sysdig API token from Secrets Manager at task start.
 aws iam put-role-policy --role-name "$TASK_ROLE" --policy-name read-sysdig-token \
