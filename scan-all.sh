@@ -97,6 +97,16 @@ FAIL=0
 SCANNED=0
 START_TIME=$(date +%s)
 
+# One line per image (status, image, ECS task id, seconds, message) so failed
+# tasks can be looked up afterwards: tail the task's logs with
+#   aws logs tail /ecs/Sysdig-Registry-Scanner --since 1h | grep <task_id>
+RESULTS_FILE="scan-all-results-$(date +%Y%m%d-%H%M%S).tsv"
+if ! $DRY_RUN; then
+  printf 'status\timage\ttask_id\tseconds\tmessage\n' > "$RESULTS_FILE"
+  echo "Results file: ${RESULTS_FILE}"
+  echo
+fi
+
 print_progress() {
   local pct=$(( SCANNED * 100 / TOTAL ))
   printf "  Progress: %d/%d scanned (%d%%) | passed: %d | failed: %d\n" \
@@ -174,7 +184,10 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
           || echo "response not readable")
     MSG="${MSG:-no response from Lambda}"
     DETAIL=$(jq -r 'if .body then (.body | fromjson
-                 | [(.stopped_reason // empty), (.error // empty)] | join(" ")) else "" end' \
+                 | [(.stopped_reason // empty)] | join(" ")) else "" end' \
+          "$TMPFILE" 2>/dev/null || true)
+    # ECS task id, when the Lambda got far enough to start a task.
+    TASK_ID=$(jq -r 'if .body then (.body | fromjson | .task_id // empty) else empty end' \
           "$TMPFILE" 2>/dev/null || true)
     CLI_ERR=$(tr '\n' ' ' < "${TMPFILE}.err" 2>/dev/null | cut -c1-300)
     rm -f "$TMPFILE" "${TMPFILE}.err"
@@ -183,22 +196,29 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
 
     case "$STATUS" in
       200)
-        printf "SUCCESS  (%ds)\n" "$ELAPSED"
+        RESULT="SUCCESS"
+        printf "SUCCESS  (%ds) task=%s\n" "$ELAPSED" "${TASK_ID:--}"
         (( PASS++      )) || true
         (( BATCH_PASS++ )) || true
         ;;
       202)
-        printf "TIMEOUT  (%ds) - task did not finish in time\n" "$ELAPSED"
+        RESULT="TIMEOUT"
+        printf "TIMEOUT  (%ds) task=%s - task did not finish in time\n" "$ELAPSED" "${TASK_ID:--}"
         (( FAIL++      )) || true
         (( BATCH_FAIL++ )) || true
         ;;
       *)
-        printf "FAILED   (%ds) - %s%s%s\n" "$ELAPSED" "$MSG" \
+        RESULT="FAILED"
+        printf "FAILED   (%ds) task=%s - %s%s%s\n" "$ELAPSED" "${TASK_ID:--}" "$MSG" \
           "${DETAIL:+ [$DETAIL]}" "${CLI_ERR:+ (aws cli: $CLI_ERR)}"
         (( FAIL++      )) || true
         (( BATCH_FAIL++ )) || true
         ;;
     esac
+
+    # Tabs and newlines in the message would break the TSV columns.
+    FLAT_MSG=$(printf '%s%s%s' "$MSG" "${DETAIL:+ [$DETAIL]}" "${CLI_ERR:+ (aws cli: $CLI_ERR)}" | tr '\t\n' '  ')
+    printf '%s\t%s\t%s\t%s\t%s\n' "$RESULT" "$IMAGE" "${TASK_ID:-}" "$ELAPSED" "$FLAT_MSG" >> "$RESULTS_FILE"
 
     (( SCANNED++ )) || true
   done
@@ -224,6 +244,7 @@ printf " Total:    %d\n" "$TOTAL"
 printf " Passed:   %d\n" "$PASS"
 printf " Failed:   %d\n" "$FAIL"
 printf " Duration: %dm %ds\n" "$MINS" "$SECS"
+$DRY_RUN || printf " Results:  %s\n" "$RESULTS_FILE"
 echo "=============================="
 
 [[ $FAIL -gt 0 ]] && exit 1 || exit 0

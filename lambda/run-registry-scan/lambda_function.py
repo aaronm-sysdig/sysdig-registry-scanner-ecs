@@ -15,6 +15,7 @@ ecs = boto3.client('ecs', config=_retry)
 
 
 def lambda_handler(event, context):
+    task_id = None  # set once the task starts, so errors after that can report it
     try:
         # The trigger Lambda invokes us with a plain dict. API Gateway would
         # wrap the payload in a JSON string under 'body'; handle both.
@@ -130,7 +131,10 @@ def lambda_handler(event, context):
         print(f'Error: {e}')
         import traceback
         traceback.print_exc()
-        return _response(500, {'success': False, 'error': str(e)})
+        failure = {'success': False, 'error': str(e)}
+        if task_id:
+            failure['task_id'] = task_id
+        return _response(500, failure)
 
 
 def _as_list(value):
