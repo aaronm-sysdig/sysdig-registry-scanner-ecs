@@ -45,7 +45,7 @@ This creates all required resources: IAM roles, ECS cluster, task definition, bo
 
 ### 4. Test
 
-Edit the CONFIG block in `test.sh` to set an image that exists in your ECR, then run:
+Edit `IMAGE_TO_SCAN` in the CONFIG block of `test.sh` to an image that exists in your ECR (the cluster, subnet and security group are read from the deployed Lambda), then run:
 
 ```bash
 ./test.sh

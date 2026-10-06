@@ -27,9 +27,9 @@ set -e
 # ---------------------------------------------------------------------------
 REGION="ap-southeast-2"
 ACCOUNT_ID=""                                  # optional: empty = the account you are logged in to; if set it must match
-CLUSTER="Sysdig-Fargate-Test-Cluster"
-SUBNET="subnet-xxxxxxxxx"
-SECURITY_GROUP="sg-xxxxxxxxx"
+CLUSTER=""                                     # empty = what the deployed ecr-push-trigger Lambda uses
+SUBNET=""                                      # empty = what the deployed ecr-push-trigger Lambda uses
+SECURITY_GROUP=""                              # empty = what the deployed ecr-push-trigger Lambda uses
 LAMBDA="run-registry-scan"
 # ---------------------------------------------------------------------------
 
@@ -63,6 +63,44 @@ fi
 ACCOUNT_ID="$AUTH_ACCOUNT"
 echo "Authenticated as ${AUTH_ARN}"
 echo
+
+# ---------------------------------------------------------------------------
+# Scan settings: a value set in the CONFIG block wins; an empty one is read
+# from the deployed ecr-push-trigger Lambda (what deploy.sh configured). The
+# source of each value is logged, and a CONFIG value that differs from what the
+# deployed trigger uses is flagged. (A dry run launches nothing, so skips this.)
+# ---------------------------------------------------------------------------
+TRIGGER_ENV=""
+TRIGGER_ENV_LOADED=false
+resolve_setting() {   # <variable name> <ecr-push-trigger environment key>
+  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed note=""
+  if ! $TRIGGER_ENV_LOADED; then
+    TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
+      --query 'Environment.Variables' --output json 2>/dev/null) || TRIGGER_ENV=""
+    TRIGGER_ENV_LOADED=true
+  fi
+  deployed=$(echo "${TRIGGER_ENV:-null}" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null || true)
+  if [ -z "$value" ]; then
+    value="$deployed"; from="ecr-push-trigger Lambda"
+  elif [ -n "$deployed" ] && [ "$deployed" != "$value" ]; then
+    note="  WARNING: the deployed ecr-push-trigger Lambda uses ${deployed}"
+  fi
+  if [ -z "$value" ]; then
+    echo "ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda."
+    echo "       Set ${var} in the CONFIG block."
+    exit 1
+  fi
+  printf -v "$var" '%s' "$value"
+  printf '  %-18s %s  (from %s)%s\n' "$var" "$value" "$from" "$note"
+}
+
+if ! $DRY_RUN; then
+  echo "Scan settings:"
+  resolve_setting CLUSTER ECS_CLUSTER
+  resolve_setting SUBNET SUBNET_ID
+  resolve_setting SECURITY_GROUP SECURITY_GROUP_ID
+  echo
+fi
 
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 CUTOFF=$(date -u -v-${MAX_AGE_DAYS}d +%Y-%m-%dT%H:%M:%S 2>/dev/null \

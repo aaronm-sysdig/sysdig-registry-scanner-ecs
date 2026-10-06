@@ -141,19 +141,36 @@ fi
 # ---------------------------------------------------------------------------
 echo "Step 3: scan settings"
 # ---------------------------------------------------------------------------
-if [ -z "$CLUSTER_NAME" ] || [ -z "$SUBNET_ID" ] || [ -z "$SECURITY_GROUP_ID" ]; then
-  if ! TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
-        --query 'Environment.Variables' --output json 2>/dev/null); then
-    echo "  ERROR: set CLUSTER_NAME, SUBNET_ID and SECURITY_GROUP_ID in CONFIG (could not read ecr-push-trigger)."
+# A value set in the CONFIG block wins; an empty one is read from the deployed
+# ecr-push-trigger Lambda (what deploy.sh configured). The source of each value
+# is logged, and a CONFIG value that differs from the deployed trigger is flagged.
+TRIGGER_ENV=""
+TRIGGER_ENV_LOADED=false
+resolve_setting() {   # <variable name> <ecr-push-trigger environment key>
+  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed note=""
+  if ! $TRIGGER_ENV_LOADED; then
+    TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
+      --query 'Environment.Variables' --output json 2>/dev/null) || TRIGGER_ENV=""
+    TRIGGER_ENV_LOADED=true
+  fi
+  deployed=$(echo "${TRIGGER_ENV:-null}" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null || true)
+  if [ -z "$value" ]; then
+    value="$deployed"; from="ecr-push-trigger Lambda"
+  elif [ -n "$deployed" ] && [ "$deployed" != "$value" ]; then
+    note="  WARNING: the deployed ecr-push-trigger Lambda uses ${deployed}"
+  fi
+  if [ -z "$value" ]; then
+    echo "  ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda."
+    echo "         Set ${var} in the CONFIG block."
     exit 1
   fi
-  CLUSTER_NAME="${CLUSTER_NAME:-$(echo "$TRIGGER_ENV" | jq -r '.ECS_CLUSTER')}"
-  SUBNET_ID="${SUBNET_ID:-$(echo "$TRIGGER_ENV" | jq -r '.SUBNET_ID')}"
-  SECURITY_GROUP_ID="${SECURITY_GROUP_ID:-$(echo "$TRIGGER_ENV" | jq -r '.SECURITY_GROUP_ID')}"
-  echo "  (cluster, subnet and security group read from the ecr-push-trigger Lambda)"
-fi
-echo "  cluster ${CLUSTER_NAME}, subnet ${SUBNET_ID}, security group ${SECURITY_GROUP_ID}"
-echo "  test image ${TEST_IMAGE}"
+  printf -v "$var" '%s' "$value"
+  printf '  %-18s %s  (from %s)%s\n' "$var" "$value" "$from" "$note"
+}
+resolve_setting CLUSTER_NAME ECS_CLUSTER
+resolve_setting SUBNET_ID SUBNET_ID
+resolve_setting SECURITY_GROUP_ID SECURITY_GROUP_ID
+echo "  test image         ${TEST_IMAGE}"
 echo
 
 # ---------------------------------------------------------------------------

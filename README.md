@@ -86,7 +86,7 @@ Re-running is safe - it updates existing resources rather than erroring.
 
 ### 4. Test
 
-Edit the CONFIG block at the top of `test.sh` to point at an image that exists in your ECR, then run:
+Edit the CONFIG block at the top of `test.sh` to point at an image that exists in your ECR, then run. The cluster, subnet and security group are left empty on purpose: the script reads them from the deployed `ecr-push-trigger` Lambda and prints where each value came from. Set one in the CONFIG block to override it (the script warns if it differs from what the deployed Lambda uses):
 
 ```bash
 ./test.sh
@@ -195,7 +195,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a detailed breakdown of the
 ./scan-all.sh --max-age-days 36500
 ```
 
-Edit the CONFIG block at the top of `scan-all.sh` the same way as `deploy.sh` - set your account ID, subnet, security group, and region. Output shows per-image pass/fail with timing, batch progress, and a final summary:
+The CONFIG block at the top of `scan-all.sh` can normally be left alone: the cluster, subnet and security group are read from the deployed `ecr-push-trigger` Lambda, and the script prints where each value came from. Set one in CONFIG to override it (the script warns if it differs from what the deployed Lambda uses). Output shows per-image pass/fail with timing, batch progress, and a final summary:
 
 ```
 Found 24 images across 8 repositories

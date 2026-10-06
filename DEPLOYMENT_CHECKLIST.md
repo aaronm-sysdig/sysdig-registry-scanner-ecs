@@ -51,7 +51,7 @@ Use this when deploying to a customer environment.
 
 ### Run test.sh
 
-- [ ] Edit the CONFIG block in `test.sh` with a test image that exists in the customer's ECR
+- [ ] Edit `IMAGE_TO_SCAN` in the CONFIG block of `test.sh` with a test image that exists in the customer's ECR (cluster, subnet and security group are read from the deployed Lambda)
 - [ ] Run `./test.sh`
 - [ ] Response shows `"statusCode": 200` and `"success": true`
 
