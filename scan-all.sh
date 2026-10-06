@@ -26,7 +26,7 @@ set -e
 # CONFIG - edit these for your environment
 # ---------------------------------------------------------------------------
 REGION="ap-southeast-2"
-ACCOUNT_ID="123456789012"
+ACCOUNT_ID=""                                  # optional: empty = the account you are logged in to; if set it must match
 CLUSTER="Sysdig-Fargate-Test-Cluster"
 SUBNET="subnet-xxxxxxxxx"
 SECURITY_GROUP="sg-xxxxxxxxx"
@@ -46,6 +46,23 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Act on the account you are authenticated to, in the chosen region.
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
+if ! CALLER=$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>&1); then
+  echo "ERROR: AWS credentials are not working: ${CALLER}"
+  exit 1
+fi
+AUTH_ACCOUNT="${CALLER%%$'\t'*}"
+AUTH_ARN="${CALLER#*$'\t'}"
+if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "$AUTH_ACCOUNT" ]; then
+  echo "ERROR: CONFIG ACCOUNT_ID is ${ACCOUNT_ID} but you are logged in to ${AUTH_ACCOUNT} (${AUTH_ARN})."
+  echo "       Log in to the right account, or clear ACCOUNT_ID to use the one you are logged in to."
+  exit 1
+fi
+ACCOUNT_ID="$AUTH_ACCOUNT"
+echo "Authenticated as ${AUTH_ARN}"
+echo
 
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 CUTOFF=$(date -u -v-${MAX_AGE_DAYS}d +%Y-%m-%dT%H:%M:%S 2>/dev/null \

@@ -26,7 +26,7 @@ Open `deploy.sh` and update the CONFIG block at the top:
 
 ```bash
 REGION="ap-southeast-2"
-ACCOUNT_ID="123456789012"
+ACCOUNT_ID=""                      # optional: empty = the account you are logged in to
 SUBNET_ID="subnet-xxxxxxxxx"
 SECURITY_GROUP_ID="sg-xxxxxxxxx"
 SYSDIG_API_URL="https://app.au1.sysdig.com"   # update to your region

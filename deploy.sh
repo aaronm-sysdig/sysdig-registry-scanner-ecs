@@ -17,13 +17,32 @@ set -e
 # CONFIG - edit these for your environment
 # ---------------------------------------------------------------------------
 REGION="ap-southeast-2"
-ACCOUNT_ID="123456789012"
+ACCOUNT_ID=""                                  # optional: empty = the account you are logged in to; if set it must match
 SUBNET_ID="subnet-xxxxxxxxx"                   # must have outbound internet (public or NAT)
 SECURITY_GROUP_ID="sg-xxxxxxxxx"               # must allow outbound HTTPS (443)
 SYSDIG_API_URL="https://app.au1.sysdig.com"
 SECRET_NAME="SECURE_API_TOKEN"                 # Secrets Manager secret holding the Sysdig API token
 CLUSTER_NAME="Sysdig-Fargate-Test-Cluster"
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Account/region guard: act on the account you are authenticated to, and make
+# the CONFIG region the one every aws call uses.
+# ---------------------------------------------------------------------------
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
+if ! CALLER=$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>&1); then
+  echo "ERROR: AWS credentials are not working: ${CALLER}"
+  exit 1
+fi
+AUTH_ACCOUNT="${CALLER%%$'\t'*}"
+AUTH_ARN="${CALLER#*$'\t'}"
+if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "$AUTH_ACCOUNT" ]; then
+  echo "ERROR: CONFIG ACCOUNT_ID is ${ACCOUNT_ID} but you are logged in to ${AUTH_ACCOUNT} (${AUTH_ARN})."
+  echo "       Log in to the right account, or clear ACCOUNT_ID to use the one you are logged in to."
+  exit 1
+fi
+ACCOUNT_ID="$AUTH_ACCOUNT"
+echo "Authenticated as ${AUTH_ARN}"
 
 REGISTRY_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 LAMBDA_ROLE="lambda-registry-scanner-role"

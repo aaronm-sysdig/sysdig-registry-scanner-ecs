@@ -48,7 +48,7 @@ Open `deploy.sh` and update the CONFIG section at the top:
 
 ```bash
 REGION="ap-southeast-2"
-ACCOUNT_ID="123456789012"
+ACCOUNT_ID=""                      # optional: empty = the account you are logged in to
 SUBNET_ID="subnet-xxxxxxxxx"        # must have outbound internet access
 SECURITY_GROUP_ID="sg-xxxxxxxxx"    # must allow outbound HTTPS (443)
 SYSDIG_API_URL="https://app.au1.sysdig.com"
@@ -61,6 +61,11 @@ Sysdig region URLs:
 - US East: `https://app.sysdigcloud.com`
 - US West: `https://us2.app.sysdig.com`
 - EU: `https://eu1.app.sysdig.com`
+
+The scripts act on whichever AWS account you are logged in to and print it when they
+start. `ACCOUNT_ID` is optional: leave it empty to use the account you are logged in
+to, or set it to make the script refuse to run against any other account. The
+`REGION` in the config block is used for every AWS call, whatever your CLI default is.
 
 ### 3. Deploy
 
