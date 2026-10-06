@@ -221,12 +221,30 @@ Batch size: 10 | Batches: 3 | Max age: 365 days
 ==============================
 ```
 
+## Updating the scanner image
+
+The scanner runs the `quay.io/sysdig/registry-scanner` image, pinned to a version in
+`ecs/task-definition-template.json`. To see whether a newer version exists, test it, and
+deploy it:
+
+```bash
+./update-test.sh --check                          # is a newer version available?
+./update-test.sh --image your-repo:your-tag       # test it with one real scan, then offer to deploy
+```
+
+The test registers a copy of the live task definition under a separate family
+(`Sysdig-Registry-Scanner-Test`) with only the image changed, so the running scanner is
+untouched. If the scan succeeds you are asked whether to deploy; answering yes updates the
+image in the template and runs `deploy.sh`. Review and commit the template change
+afterwards. Use `--version job-0.12.3` to test a specific tag. Needs `aws`, `jq` and `curl`.
+
 ## Repository structure
 
 ```
 deploy.sh                            - deploys the complete solution (edit CONFIG block first)
 test.sh                              - invokes a scan directly for testing
 scan-all.sh                          - bulk-scans all ECR images in the account
+update-test.sh                       - checks for a newer scanner image, tests it, offers to deploy
 iam/
   lambda-trust-policy.json           - trust policy for the Lambda IAM role
   lambda-policy.json                 - permissions for both Lambdas (single consolidated policy)
