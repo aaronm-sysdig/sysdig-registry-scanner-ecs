@@ -9,7 +9,7 @@
   "containerDefinitions": [
     {
       "name": "registry-scanner",
-      "image": "quay.io/sysdig/registry-scanner:job-0.10.2",
+      "image": "quay.io/sysdig/registry-scanner:job-0.12.3",
       "essential": true,
       "command": ["--scan_runner=sbom-exporter"],
       "environment": [
