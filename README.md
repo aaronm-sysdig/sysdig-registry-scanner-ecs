@@ -93,7 +93,7 @@ Re-running is safe - it updates existing resources rather than erroring.
 
 ### 4. Test
 
-Edit the CONFIG block at the top of `test.sh` to point at an image that exists in your ECR, then run. The cluster, subnet and security group are left empty on purpose: the script reads them from the deployed `ecr-push-trigger` Lambda and prints where each value came from. Set one in the CONFIG block to override it (the script warns if it differs from what the deployed Lambda uses):
+Set `IMAGE_TO_SCAN` in the CONFIG block at the top of `test.sh` to an image that exists in your ECR, then run it. The cluster, subnet and security group are left empty on purpose: the script reads them from the deployed `ecr-push-trigger` Lambda and prints where each value came from. Set one in the CONFIG block to override it (the script warns if it differs from what the deployed Lambda uses). It exits non-zero if the scan fails:
 
 ```bash
 ./test.sh
@@ -169,7 +169,7 @@ Common causes: ECR auth error, image not found, no network route to Sysdig API, 
 
 The orchestrator waits up to about 14 minutes for the task to stop. A 202 means the task started but the waiter hit its limit - the scan may still be running. Check ECS:
 ```bash
-aws ecs list-tasks --cluster Sysdig-Fargate-Test-Cluster --region YOUR_REGION
+aws ecs list-tasks --cluster YOUR_CLUSTER_NAME --region YOUR_REGION
 aws logs tail /ecs/Sysdig-Registry-Scanner --since 30m --region YOUR_REGION
 ```
 
@@ -199,7 +199,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a detailed breakdown of the
 ./scan-all.sh --dry-run
 
 # Scan all tagged images regardless of age
-./scan-all.sh --max-age-days 36500
+./scan-all.sh --max-age-days 0
 ```
 
 The CONFIG block at the top of `scan-all.sh` can normally be left alone: the cluster, subnet and security group are read from the deployed `ecr-push-trigger` Lambda, and the script prints where each value came from. Set one in CONFIG to override it (the script warns if it differs from what the deployed Lambda uses). Output shows per-image pass/fail with timing, batch progress, and a final summary:

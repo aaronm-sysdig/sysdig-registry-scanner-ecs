@@ -85,11 +85,12 @@ aws lambda invoke \
     --payload '{
       "image_to_scan": "my-repo:v1.0.0",
       "registry_url": "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com",
-      "cluster": "Sysdig-Fargate-Test-Cluster",
+      "cluster": "YOUR_CLUSTER_NAME",
       "subnet": "subnet-xxxxxxxxx",
       "security_groups": ["sg-xxxxxxxxx"]
     }' \
     --cli-binary-format raw-in-base64-out \
+    --cli-read-timeout 960 \
     --region YOUR_REGION \
     response.json && cat response.json | jq .
 ```

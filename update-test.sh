@@ -144,30 +144,34 @@ echo "Step 3: scan settings"
 # A value set in the CONFIG block wins; an empty one is read from the deployed
 # ecr-push-trigger Lambda (what deploy.sh configured). The source of each value
 # is logged, and a CONFIG value that differs from the deployed trigger is flagged.
-TRIGGER_ENV=""
-TRIGGER_ENV_LOADED=false
-resolve_setting() {   # <variable name> <ecr-push-trigger environment key>
-  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed note=""
-  if ! $TRIGGER_ENV_LOADED; then
-    TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
-      --query 'Environment.Variables' --output json 2>/dev/null) || TRIGGER_ENV=""
-    TRIGGER_ENV_LOADED=true
+TRIGGER_ERR=""
+if ! TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
+      --query 'Environment.Variables' --output json 2>&1); then
+  TRIGGER_ERR=$(echo "$TRIGGER_ENV" | tr '\n' ' ' | cut -c1-200)
+  TRIGGER_ENV=""
+fi
+resolve_setting() {   # <variable name> <ecr-push-trigger environment key> [default the trigger falls back to]
+  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed="" note=""
+  if [ -n "$TRIGGER_ENV" ]; then
+    deployed=$(echo "$TRIGGER_ENV" | jq -r --arg k "$key" '.[$k] // empty')
+    deployed="${deployed:-$3}"
   fi
-  deployed=$(echo "${TRIGGER_ENV:-null}" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null || true)
   if [ -z "$value" ]; then
     value="$deployed"; from="ecr-push-trigger Lambda"
+  elif [ -z "$TRIGGER_ENV" ]; then
+    note="  (not compared: could not read the ecr-push-trigger Lambda: ${TRIGGER_ERR})"
   elif [ -n "$deployed" ] && [ "$deployed" != "$value" ]; then
     note="  WARNING: the deployed ecr-push-trigger Lambda uses ${deployed}"
   fi
   if [ -z "$value" ]; then
-    echo "  ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda."
-    echo "         Set ${var} in the CONFIG block."
+    echo "ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda${TRIGGER_ERR:+: ${TRIGGER_ERR}}."
+    echo "       Set ${var} in the CONFIG block."
     exit 1
   fi
   printf -v "$var" '%s' "$value"
   printf '  %-18s %s  (from %s)%s\n' "$var" "$value" "$from" "$note"
 }
-resolve_setting CLUSTER_NAME ECS_CLUSTER
+resolve_setting CLUSTER_NAME ECS_CLUSTER Sysdig-Fargate-Test-Cluster
 resolve_setting SUBNET_ID SUBNET_ID
 resolve_setting SECURITY_GROUP_ID SECURITY_GROUP_ID
 echo "  test image         ${TEST_IMAGE}"

@@ -18,6 +18,10 @@ CLUSTER_NAME=""                                # empty = what the deployed ecr-p
 IMAGE_TO_SCAN="your-repo:your-tag"             # repo:tag in your ECR
 # ---------------------------------------------------------------------------
 
+for tool in aws jq; do
+  command -v "$tool" >/dev/null || { echo "ERROR: $tool is required but not installed."; exit 1; }
+done
+
 # Act on the account you are authenticated to, in the CONFIG region.
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 if ! CALLER=$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>&1); then
@@ -40,23 +44,27 @@ echo "Authenticated as ${AUTH_ARN}"
 # source of each value is logged, and a CONFIG value that differs from what the
 # deployed trigger uses is flagged.
 # ---------------------------------------------------------------------------
-TRIGGER_ENV=""
-TRIGGER_ENV_LOADED=false
-resolve_setting() {   # <variable name> <ecr-push-trigger environment key>
-  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed note=""
-  if ! $TRIGGER_ENV_LOADED; then
-    TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
-      --query 'Environment.Variables' --output json 2>/dev/null) || TRIGGER_ENV=""
-    TRIGGER_ENV_LOADED=true
+TRIGGER_ERR=""
+if ! TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
+      --query 'Environment.Variables' --output json 2>&1); then
+  TRIGGER_ERR=$(echo "$TRIGGER_ENV" | tr '\n' ' ' | cut -c1-200)
+  TRIGGER_ENV=""
+fi
+resolve_setting() {   # <variable name> <ecr-push-trigger environment key> [default the trigger falls back to]
+  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed="" note=""
+  if [ -n "$TRIGGER_ENV" ]; then
+    deployed=$(echo "$TRIGGER_ENV" | jq -r --arg k "$key" '.[$k] // empty')
+    deployed="${deployed:-$3}"
   fi
-  deployed=$(echo "${TRIGGER_ENV:-null}" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null || true)
   if [ -z "$value" ]; then
     value="$deployed"; from="ecr-push-trigger Lambda"
+  elif [ -z "$TRIGGER_ENV" ]; then
+    note="  (not compared: could not read the ecr-push-trigger Lambda: ${TRIGGER_ERR})"
   elif [ -n "$deployed" ] && [ "$deployed" != "$value" ]; then
     note="  WARNING: the deployed ecr-push-trigger Lambda uses ${deployed}"
   fi
   if [ -z "$value" ]; then
-    echo "ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda."
+    echo "ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda${TRIGGER_ERR:+: ${TRIGGER_ERR}}."
     echo "       Set ${var} in the CONFIG block."
     exit 1
   fi
@@ -65,7 +73,7 @@ resolve_setting() {   # <variable name> <ecr-push-trigger environment key>
 }
 
 echo "Scan settings:"
-resolve_setting CLUSTER_NAME ECS_CLUSTER
+resolve_setting CLUSTER_NAME ECS_CLUSTER Sysdig-Fargate-Test-Cluster
 resolve_setting SUBNET_ID SUBNET_ID
 resolve_setting SECURITY_GROUP_ID SECURITY_GROUP_ID
 echo
@@ -87,16 +95,18 @@ aws lambda invoke \
   --payload "$PAYLOAD" \
   --cli-binary-format raw-in-base64-out \
   --region "$REGION" \
-  --cli-read-timeout 360 \
+  --cli-read-timeout 960 \
   response.json >/dev/null
 
 echo "Response:"
 cat response.json | jq .
 
-STATUS=$(jq -r '.statusCode' response.json)
+STATUS=$(jq -r '.statusCode // "none"' response.json)
+TASK_ID=$(jq -r 'if .body then (.body | fromjson | .task_id // empty) else empty end' response.json 2>/dev/null || true)
 if [ "$STATUS" = "200" ]; then
-  echo "PASS - scan completed successfully"
+  echo "PASS - scan completed successfully${TASK_ID:+ (task ${TASK_ID})}"
 else
-  echo "Check the response above and the scanner logs:"
-  echo "  aws logs tail /ecs/Sysdig-Registry-Scanner --since 30m"
+  echo "FAIL - status ${STATUS}. Check the response above and the scanner logs:"
+  echo "  aws logs tail /ecs/Sysdig-Registry-Scanner --since 30m${TASK_ID:+ | grep ${TASK_ID}}"
+  exit 1
 fi

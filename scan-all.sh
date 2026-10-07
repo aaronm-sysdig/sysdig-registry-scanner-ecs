@@ -9,7 +9,7 @@
 #
 # Options:
 #   --batch-size N     number of scans to run in parallel (default: 10)
-#   --max-age-days N   only scan images pushed within this many days (default: 365)
+#   --max-age-days N   only scan images pushed within this many days; 0 = no age limit (default: 365)
 #   --region REGION    AWS region (default: value in CONFIG block below)
 #   --dry-run          discover and list images without invoking any scans
 #
@@ -47,6 +47,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+for tool in aws jq; do
+  command -v "$tool" >/dev/null || { echo "ERROR: $tool is required but not installed."; exit 1; }
+done
+if ! [[ "$BATCH_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --batch-size must be a whole number of 1 or more."
+  exit 1
+fi
+if ! [[ "$MAX_AGE_DAYS" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --max-age-days must be a whole number (0 = no age limit)."
+  exit 1
+fi
+
 # Act on the account you are authenticated to, in the chosen region.
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 if ! CALLER=$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>&1); then
@@ -68,25 +80,30 @@ echo
 # Scan settings: a value set in the CONFIG block wins; an empty one is read
 # from the deployed ecr-push-trigger Lambda (what deploy.sh configured). The
 # source of each value is logged, and a CONFIG value that differs from what the
-# deployed trigger uses is flagged. (A dry run launches nothing, so skips this.)
+# deployed trigger uses is flagged. A dry run resolves them too, so it shows
+# what a real run would use.
 # ---------------------------------------------------------------------------
-TRIGGER_ENV=""
-TRIGGER_ENV_LOADED=false
-resolve_setting() {   # <variable name> <ecr-push-trigger environment key>
-  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed note=""
-  if ! $TRIGGER_ENV_LOADED; then
-    TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
-      --query 'Environment.Variables' --output json 2>/dev/null) || TRIGGER_ENV=""
-    TRIGGER_ENV_LOADED=true
+TRIGGER_ERR=""
+if ! TRIGGER_ENV=$(aws lambda get-function-configuration --function-name ecr-push-trigger \
+      --query 'Environment.Variables' --output json 2>&1); then
+  TRIGGER_ERR=$(echo "$TRIGGER_ENV" | tr '\n' ' ' | cut -c1-200)
+  TRIGGER_ENV=""
+fi
+resolve_setting() {   # <variable name> <ecr-push-trigger environment key> [default the trigger falls back to]
+  local var="$1" key="$2" value="${!1}" from="CONFIG" deployed="" note=""
+  if [ -n "$TRIGGER_ENV" ]; then
+    deployed=$(echo "$TRIGGER_ENV" | jq -r --arg k "$key" '.[$k] // empty')
+    deployed="${deployed:-$3}"
   fi
-  deployed=$(echo "${TRIGGER_ENV:-null}" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null || true)
   if [ -z "$value" ]; then
     value="$deployed"; from="ecr-push-trigger Lambda"
+  elif [ -z "$TRIGGER_ENV" ]; then
+    note="  (not compared: could not read the ecr-push-trigger Lambda: ${TRIGGER_ERR})"
   elif [ -n "$deployed" ] && [ "$deployed" != "$value" ]; then
     note="  WARNING: the deployed ecr-push-trigger Lambda uses ${deployed}"
   fi
   if [ -z "$value" ]; then
-    echo "ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda."
+    echo "ERROR: ${var} is empty in CONFIG and could not be read from the ecr-push-trigger Lambda${TRIGGER_ERR:+: ${TRIGGER_ERR}}."
     echo "       Set ${var} in the CONFIG block."
     exit 1
   fi
@@ -94,53 +111,68 @@ resolve_setting() {   # <variable name> <ecr-push-trigger environment key>
   printf '  %-18s %s  (from %s)%s\n' "$var" "$value" "$from" "$note"
 }
 
-if ! $DRY_RUN; then
-  echo "Scan settings:"
-  resolve_setting CLUSTER ECS_CLUSTER
-  resolve_setting SUBNET SUBNET_ID
-  resolve_setting SECURITY_GROUP SECURITY_GROUP_ID
-  echo
-fi
+echo "Scan settings:"
+resolve_setting CLUSTER ECS_CLUSTER Sysdig-Fargate-Test-Cluster
+resolve_setting SUBNET SUBNET_ID
+resolve_setting SECURITY_GROUP SECURITY_GROUP_ID
+echo
 
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-CUTOFF=$(date -u -v-${MAX_AGE_DAYS}d +%Y-%m-%dT%H:%M:%S 2>/dev/null \
-      || date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%S)
+if [ "$MAX_AGE_DAYS" -eq 0 ]; then
+  CUTOFF="1970-01-01T00:00:00"
+else
+  CUTOFF=$(date -u -v-${MAX_AGE_DAYS}d +%Y-%m-%dT%H:%M:%S 2>/dev/null \
+        || date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%S)
+fi
 
 # ---------------------------------------------------------------------------
 # Discover images
 # ---------------------------------------------------------------------------
 echo "Discovering ECR repositories in ${REGION}..."
 
-IMAGES=()
+if ! REPO_LIST=$(aws ecr describe-repositories \
+      --query 'repositories[*].repositoryName' --output text 2>&1); then
+  echo "ERROR: could not list ECR repositories: ${REPO_LIST}"
+  exit 1
+fi
 
-while IFS= read -r REPO; do
-  [[ -z "$REPO" ]] && continue
-  # Use JSON output + jq to get one tag per line (text output is tab-separated)
+IMAGES=()
+SKIPPED_REPOS=0
+REPO_COUNT=0
+
+# ECR repository names cannot contain spaces or glob characters, so splitting is safe.
+for REPO in $(echo "$REPO_LIST" | tr '\t' '\n'); do
+  REPO_COUNT=$(( REPO_COUNT + 1 ))
+  # JSON output + jq gives one tag per line (text output is tab-separated).
+  if ! TAG_JSON=$(aws ecr describe-images --repository-name "$REPO" \
+        --query "imageDetails[?imagePushedAt >= '${CUTOFF}' && length(imageTags) > \`0\`].imageTags[0]" \
+        --output json 2>&1); then
+    echo "  WARNING: could not list images in ${REPO}: $(echo "$TAG_JSON" | tr '\n' ' ' | cut -c1-200)"
+    SKIPPED_REPOS=$(( SKIPPED_REPOS + 1 ))
+    continue
+  fi
   while IFS= read -r TAG; do
     [[ -z "$TAG" || "$TAG" == "null" ]] && continue
     IMAGES+=("${REPO}:${TAG}")
-  done < <(aws ecr describe-images \
-    --repository-name "$REPO" \
-    --region "$REGION" \
-    --query "imageDetails[?imagePushedAt >= '${CUTOFF}' && length(imageTags) > \`0\`].imageTags[0]" \
-    --output json 2>/dev/null | jq -r '.[]' 2>/dev/null || true)
-done < <(aws ecr describe-repositories --region "$REGION" \
-  --query 'repositories[*].repositoryName' --output text \
-  | tr '\t' '\n')
+  done < <(echo "$TAG_JSON" | jq -r '.[]')
+done
 
 TOTAL=${#IMAGES[@]}
-REPO_COUNT=$(aws ecr describe-repositories --region "$REGION" \
-  --query 'length(repositories)' --output text 2>/dev/null)
 
 if [[ $TOTAL -eq 0 ]]; then
-  echo "No tagged images found pushed within the last ${MAX_AGE_DAYS} days."
+  echo "No tagged images found in ${REPO_COUNT} repositories pushed within the last ${MAX_AGE_DAYS} days."
+  if [[ $SKIPPED_REPOS -gt 0 ]]; then
+    echo "${SKIPPED_REPOS} repositories could not be read (see warnings above)."
+    exit 1
+  fi
   exit 0
 fi
 
 BATCHES=$(( (TOTAL + BATCH_SIZE - 1) / BATCH_SIZE ))
 
 echo "Found ${TOTAL} images across ${REPO_COUNT} repositories"
-echo "Batch size: ${BATCH_SIZE} | Batches: ${BATCHES} | Max age: ${MAX_AGE_DAYS} days"
+[[ $SKIPPED_REPOS -gt 0 ]] && echo "WARNING: ${SKIPPED_REPOS} repositories could not be read and are NOT included"
+echo "Batch size: ${BATCH_SIZE} | Batches: ${BATCHES} | Max age: ${MAX_AGE_DAYS} days (0 = no limit)"
 $DRY_RUN && echo "(dry run - Lambda will not be invoked)"
 echo
 
@@ -175,19 +207,19 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
 
   echo "--- Batch ${BATCH_NUM}/${BATCHES} (images $(( OFFSET + 1 ))-$(( OFFSET + COUNT ))) ---"
 
-  # Per-image tracking for this batch
-  declare -a BATCH_IMAGES=()
-  declare -A BATCH_PIDS=()
-  declare -A BATCH_FILES=()
-  declare -A BATCH_TIMES=()
+  # Per-image tracking for this batch, indexed by position in the batch.
+  # (Indexed arrays only, so this runs on macOS's bash 3.2 as well.)
+  BATCH_IMAGES=()
+  BATCH_FILES=()
+  BATCH_TIMES=()
 
   for (( I=0; I<COUNT; I++ )); do
     IMAGE="${IMAGES[$(( OFFSET + I ))]}"
     LABEL=$(( OFFSET + I + 1 ))
-    BATCH_IMAGES+=("$IMAGE")
     TMPFILE=$(mktemp /tmp/scan-XXXXXX)
-    BATCH_FILES["$IMAGE"]="$TMPFILE"
-    BATCH_TIMES["$IMAGE"]=$(date +%s)
+    BATCH_IMAGES[I]="$IMAGE"
+    BATCH_FILES[I]="$TMPFILE"
+    BATCH_TIMES[I]=$(date +%s)
 
     printf "  [%3d/%-3d] %-55s" "$LABEL" "$TOTAL" "$IMAGE"
 
@@ -214,7 +246,6 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
       --cli-read-timeout 1200 \
       "$TMPFILE" >/dev/null 2>"${TMPFILE}.err" &
 
-    BATCH_PIDS["$IMAGE"]=$!
     echo "launched"
   done
 
@@ -226,10 +257,11 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
   BATCH_PASS=0
   BATCH_FAIL=0
 
-  for IMAGE in "${BATCH_IMAGES[@]}"; do
-    TMPFILE="${BATCH_FILES[$IMAGE]}"
-    LABEL=$(( OFFSET + $(( $(printf '%s\n' "${BATCH_IMAGES[@]}" | grep -n "^${IMAGE}$" | cut -d: -f1) - 1 )) + 1 ))
-    ELAPSED=$(( $(date +%s) - ${BATCH_TIMES[$IMAGE]} ))
+  for (( I=0; I<COUNT; I++ )); do
+    IMAGE="${BATCH_IMAGES[I]}"
+    TMPFILE="${BATCH_FILES[I]}"
+    LABEL=$(( OFFSET + I + 1 ))
+    ELAPSED=$(( $(date +%s) - ${BATCH_TIMES[I]} ))
     # Read everything we need before deleting the response file.
     STATUS=$(jq -r '.statusCode // "none"' "$TMPFILE" 2>/dev/null || echo "none")
     # The Lambda returns {statusCode, body}. If the Lambda itself fails (for
@@ -282,8 +314,6 @@ for (( BATCH=0; BATCH<BATCHES; BATCH++ )); do
     "$BATCH_NUM" "$BATCHES" "$BATCH_PASS" "$BATCH_FAIL"
   print_progress
   echo
-
-  unset BATCH_IMAGES BATCH_PIDS BATCH_FILES BATCH_TIMES
 done
 
 # ---------------------------------------------------------------------------
@@ -298,8 +328,9 @@ echo " Scan complete"
 printf " Total:    %d\n" "$TOTAL"
 printf " Passed:   %d\n" "$PASS"
 printf " Failed:   %d\n" "$FAIL"
+[[ $SKIPPED_REPOS -gt 0 ]] && printf " Skipped:  %d repositories could not be read\n" "$SKIPPED_REPOS"
 printf " Duration: %dm %ds\n" "$MINS" "$SECS"
 $DRY_RUN || printf " Results:  %s\n" "$RESULTS_FILE"
 echo "=============================="
 
-[[ $FAIL -gt 0 ]] && exit 1 || exit 0
+[[ $FAIL -gt 0 || $SKIPPED_REPOS -gt 0 ]] && exit 1 || exit 0

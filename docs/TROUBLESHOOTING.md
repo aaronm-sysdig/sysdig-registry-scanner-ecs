@@ -97,7 +97,7 @@ The orchestrator waits up to about 14 minutes for the Fargate task to stop. A 20
 Check:
 ```bash
 # List running/recent tasks
-aws ecs list-tasks --cluster Sysdig-Fargate-Test-Cluster --region YOUR_REGION
+aws ecs list-tasks --cluster YOUR_CLUSTER_NAME --region YOUR_REGION
 
 # Check scanner logs for progress
 aws logs tail /ecs/Sysdig-Registry-Scanner --since 30m --region YOUR_REGION
@@ -111,12 +111,18 @@ Very large images (multi-GB) can take longer than 14 minutes. In that case the s
 
 **Symptom:** Task exits with code 0, but nothing appears under **Vulnerabilities -> Findings -> Registry**.
 
-1. Verify the API token is valid:
+1. Check the stored token without printing it. A key/value secret starts with `{`, and a Sysdig token is
+   usually a UUID of about 36 characters. If the first character is `{`, re-run `./deploy.sh`, which
+   points the task at the first key. Then test the token against your Sysdig region's API (expect `200`;
+   `/api/user/me` is the usual authenticated endpoint, but use whichever authenticated call your Sysdig
+   documentation recommends):
    ```bash
-   aws secretsmanager get-secret-value \
-       --secret-id SECURE_API_TOKEN \
-       --query SecretString --output text \
-       --region YOUR_REGION
+   TOKEN=$(aws secretsmanager get-secret-value --secret-id YOUR_SECRET_NAME \
+       --query SecretString --output text --region YOUR_REGION)
+   printf 'first char: %s   length: %s\n' "${TOKEN:0:1}" "${#TOKEN}"
+   curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer ${TOKEN}" \
+       https://app.au1.sysdig.com/api/user/me      # use your Sysdig region URL
+   unset TOKEN
    ```
 
 2. Confirm the Sysdig API URL in the task definition is correct:
@@ -156,11 +162,11 @@ aws lambda get-function-configuration --function-name ecr-push-trigger --region 
 aws ecs describe-task-definition --task-definition Sysdig-Registry-Scanner --region YOUR_REGION
 
 # List recent stopped tasks
-aws ecs list-tasks --cluster Sysdig-Fargate-Test-Cluster \
+aws ecs list-tasks --cluster YOUR_CLUSTER_NAME \
   --desired-status STOPPED --region YOUR_REGION
 
 # Check a specific task's exit code
-aws ecs describe-tasks --cluster Sysdig-Fargate-Test-Cluster \
+aws ecs describe-tasks --cluster YOUR_CLUSTER_NAME \
   --tasks TASK_ID --region YOUR_REGION \
   --query 'tasks[0].{status:lastStatus,exit:containers[0].exitCode,reason:stoppedReason}'
 
