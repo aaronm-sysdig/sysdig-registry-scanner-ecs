@@ -37,6 +37,8 @@ Sysdig Secure
 
 Triggered by EventBridge whenever an image is successfully pushed to any ECR repository in the account. It extracts the repository name, image tag, account ID, and region from the event, then invokes `run-registry-scan` asynchronously (fire-and-forget). Its own execution completes in under a second.
 
+Pushes with no image tag are skipped: a push by digest, or the per-architecture child manifests of a multi-arch image, carry no tag, and scanning an invented `:latest` would scan an unrelated image or fail. Only tagged images are scanned, which matches `scan-all.sh`. Because the orchestrator is invoked asynchronously, a failure there is only visible in its CloudWatch log; nothing retries it or raises an alarm.
+
 Environment variables (set by `deploy.sh`):
 - `SCANNER_LAMBDA_NAME` - orchestrator function to invoke
 - `ECS_CLUSTER` - cluster to run the task in

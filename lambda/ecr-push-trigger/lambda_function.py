@@ -21,9 +21,16 @@ def lambda_handler(event, context):
     try:
         detail = event['detail']
         repository = detail['repository-name']
-        tag = detail.get('image-tag', 'latest')
         account_id = event['account']
         region = event['region']
+
+        # Pushes with no tag (a push by digest, or the per-architecture child
+        # manifests of a multi-arch image) carry no 'image-tag'. Do not invent
+        # ':latest' for them, which would scan an unrelated image or fail.
+        tag = detail.get('image-tag')
+        if not tag:
+            print(f'Skipping push to {repository} with no image tag')
+            return {'statusCode': 200, 'body': json.dumps({'message': f'Skipped untagged push to {repository}'})}
 
         image_to_scan = f'{repository}:{tag}'
         registry_url = f'{account_id}.dkr.ecr.{region}.amazonaws.com'
