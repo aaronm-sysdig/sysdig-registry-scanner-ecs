@@ -6,16 +6,20 @@
 # The test never touches the live scanner: it registers a copy of the live task
 # definition under a separate family (Sysdig-Registry-Scanner-Test) with only
 # the image changed, and scans one image with it. The live family is only
-# updated if the test passes and you answer yes (by running deploy.sh).
+# updated if the test passes and you answer yes: the exact definition that was
+# tested is then registered as a new revision of the live family (deploy.sh is
+# not run, so nothing else in your account is touched).
 #
 # Usage:
-#   ./update-test.sh --image repo:tag [--check] [--version TAG]
+#   ./update-test.sh --image repo:tag [--check] [--version TAG] [--skip-tls true|false]
 #
 # Options:
 #   --image repo:tag   an image in your ECR to scan as the test (required unless
 #                      TEST_IMAGE is set below)
 #   --check            only report whether a newer version exists, do not test
 #   --version TAG      test this tag (e.g. job-0.12.3) instead of the newest
+#   --skip-tls VALUE   also set REGISTRYSCANNER_SECURE_SKIPTLS to true or false in
+#                      the tested definition (and in the live one if you deploy)
 #
 # Needs: aws, jq, curl.
 
@@ -38,14 +42,21 @@ QUAY_API="https://quay.io/api/v1/repository/sysdig/registry-scanner/tag/?limit=1
 
 CHECK_ONLY=false
 WANT_VERSION=""
+SKIP_TLS=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --image)   TEST_IMAGE="$2";   shift 2 ;;
     --check)   CHECK_ONLY=true;   shift   ;;
     --version) WANT_VERSION="$2"; shift 2 ;;
+    --skip-tls) SKIP_TLS="$2";    shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+if [ -n "$SKIP_TLS" ] && [ "$SKIP_TLS" != "true" ] && [ "$SKIP_TLS" != "false" ]; then
+  echo "ERROR: --skip-tls must be true or false."
+  exit 1
+fi
 
 cd "$(dirname "$0")"
 
@@ -181,13 +192,22 @@ echo
 echo "Step 4: register a test task definition (${TEST_FAMILY}) with ${NEW_TAG}"
 # ---------------------------------------------------------------------------
 # Copy the live definition, drop the fields ECS adds, change only family+image.
-REGISTER_JSON=$(echo "$LIVE_JSON" | jq --arg fam "$TEST_FAMILY" --arg img "${IMAGE_REPO}:${NEW_TAG}" '
-  {family: $fam, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
+# REGISTER_JSON is the definition under test; if you deploy, this same JSON is
+# registered as the new live revision, so what ships is exactly what was tested.
+REGISTER_JSON=$(echo "$LIVE_JSON" | jq --arg img "${IMAGE_REPO}:${NEW_TAG}" --arg tls "$SKIP_TLS" '
+  {taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
    volumes, requiresCompatibilities, cpu, memory, runtimePlatform, ephemeralStorage}
   | .containerDefinitions[0].image = $img
+  | if $tls != "" then
+      .containerDefinitions[0].environment =
+        ((.containerDefinitions[0].environment // [])
+         | map(select(.name != "REGISTRYSCANNER_SECURE_SKIPTLS"))
+         + [{name: "REGISTRYSCANNER_SECURE_SKIPTLS", value: $tls}])
+    else . end
   | with_entries(select(.value != null))')
+[ -n "$SKIP_TLS" ] && echo "  REGISTRYSCANNER_SECURE_SKIPTLS=${SKIP_TLS} in the tested definition"
 TEST_TD_FILE=$(mktemp /tmp/update-test-XXXXXX)
-echo "$REGISTER_JSON" > "$TEST_TD_FILE"
+echo "$REGISTER_JSON" | jq --arg fam "$TEST_FAMILY" '. + {family: $fam}' > "$TEST_TD_FILE"
 TEST_TD_ARN=$(aws ecs register-task-definition --cli-input-json "file://${TEST_TD_FILE}" \
   --query 'taskDefinition.taskDefinitionArn' --output text)
 rm -f "$TEST_TD_FILE"
@@ -231,7 +251,7 @@ echo
 echo "Step 6: deploy"
 # ---------------------------------------------------------------------------
 if [ ! -t 0 ]; then
-  echo "  Not interactive. To deploy ${NEW_TAG}: set the image tag in ecs/task-definition-template.json and run ./deploy.sh"
+  echo "  Not interactive, so not deployed. Re-run in a terminal to be asked."
   exit 0
 fi
 read -r -p "  Deploy ${NEW_TAG} (replaces ${CURRENT_TAG}) now? [y/N] " ANSWER
@@ -240,14 +260,27 @@ if [[ ! "$ANSWER" =~ ^[Yy]$ ]]; then
   exit 0
 fi
 
+# Register exactly the tested definition as a new revision of the live family.
+LIVE_TD_FILE=$(mktemp /tmp/update-test-XXXXXX)
+echo "$REGISTER_JSON" | jq --arg fam "$LIVE_FAMILY" '. + {family: $fam}' > "$LIVE_TD_FILE"
+NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "file://${LIVE_TD_FILE}" \
+  --query 'taskDefinition.revision' --output text)
+rm -f "$LIVE_TD_FILE"
+echo "  registered ${LIVE_FAMILY}:${NEW_REVISION} running ${NEW_TAG}"
+echo "  The scanner Lambdas use the latest revision, so new scans use it now."
+
+# Keep the repo template in step so the next deploy.sh does not revert it.
 TEMPLATE="ecs/task-definition-template.json"
 sed "s|${IMAGE_REPO}:${CURRENT_TAG}|${IMAGE_REPO}:${NEW_TAG}|" "$TEMPLATE" > "${TEMPLATE}.new"
 if cmp -s "$TEMPLATE" "${TEMPLATE}.new"; then
   rm -f "${TEMPLATE}.new"
-  echo "  ERROR: ${TEMPLATE} does not reference ${IMAGE_REPO}:${CURRENT_TAG}; update its image by hand and run ./deploy.sh."
-  exit 1
+  echo "  WARNING: ${TEMPLATE} does not reference ${IMAGE_REPO}:${CURRENT_TAG}."
+  echo "           Update its image to ${NEW_TAG} by hand, or the next ./deploy.sh will revert it."
+else
+  mv "${TEMPLATE}.new" "$TEMPLATE"
+  echo "  ${TEMPLATE} now uses ${NEW_TAG} (review and commit it)"
 fi
-mv "${TEMPLATE}.new" "$TEMPLATE"
-echo "  ${TEMPLATE} now uses ${NEW_TAG} (review and commit it)"
-echo
-bash ./deploy.sh
+if [ -n "$SKIP_TLS" ]; then
+  echo "  NOTE: you deployed SECURE_SKIPTLS=${SKIP_TLS}. Set SECURE_SKIPTLS=\"${SKIP_TLS}\" in the CONFIG block of"
+  echo "        deploy.sh too, or the next ./deploy.sh will put it back to its CONFIG value."
+fi

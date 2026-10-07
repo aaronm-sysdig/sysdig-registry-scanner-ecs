@@ -48,6 +48,16 @@ git pull origin main
 
 After pulling, re-run `./deploy.sh` to apply any changes to Lambda code or the task definition.
 
+`deploy.sh` has a CONFIG block you edit in place, so `git pull` refuses if you changed it. Keep your values with:
+
+```bash
+git stash && git pull origin main && git stash pop
+```
+
+If `git stash pop` reports a conflict in the CONFIG block, keep the new file and re-enter your values.
+`./update-test.sh` registers new scanner image versions directly and updates `ecs/task-definition-template.json`,
+so commit or stash that file change before pulling.
+
 ## Making changes
 
 ```bash
