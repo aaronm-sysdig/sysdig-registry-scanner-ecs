@@ -11,12 +11,12 @@ Use this when deploying to a customer environment.
 - [ ] VPC Subnet ID (needs outbound internet): ______________________
 - [ ] Security Group ID (allows outbound 443): ______________________
 - [ ] Sysdig API URL: ______________________
-- [ ] Sysdig API Token: ______________________
+- [ ] Sysdig API token is in Secrets Manager (do not write it in this document)
 
 ### Verify prerequisites
 
 - [ ] AWS CLI installed and configured with admin access
-- [ ] `jq` installed
+- [ ] `jq` and `zip` installed
 - [ ] Subnet has internet access (public subnet or private with NAT gateway)
 - [ ] Security group allows outbound HTTPS (port 443)
 
@@ -40,7 +40,7 @@ Use this when deploying to a customer environment.
 ### Confirm resources created
 
 - [ ] IAM role: `lambda-registry-scanner-role` (one inline policy: `registry-scanner`)
-- [ ] IAM role: `ecsTaskExecutionRole`
+- [ ] IAM role: `sysdig-registry-scanner-task-role`
 - [ ] ECS cluster: as configured in `deploy.sh`
 - [ ] ECS task definition: `Sysdig-Registry-Scanner` (latest revision)
 - [ ] Lambda: `run-registry-scan` (timeout: 900s)

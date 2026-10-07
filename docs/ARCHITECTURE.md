@@ -66,6 +66,10 @@ Runs `quay.io/sysdig/registry-scanner` in `sbom-exporter` mode (`--scan_runner=s
 
 The Sysdig API token is injected at task startup from AWS Secrets Manager (via the ECS task execution role). The ECR credentials are passed as environment overrides by the orchestrator Lambda each time the task is launched - this is necessary because the scanner's image-pull component requires explicit Basic Auth credentials rather than using the IAM role directly.
 
+Security note: container overrides are recorded in the CloudTrail `RunTask` event and returned by `ecs:DescribeTasks`. The ECR password is a 12 hour token with the Lambda role's ECR read access, so anyone who can read CloudTrail events or describe tasks in the account can copy it. Restrict those permissions accordingly.
+
+The scanner verifies Sysdig's TLS certificate when it sends the API token (`SECURE_SKIPTLS="false"` in `deploy.sh`). Set it to `"true"` only behind a TLS-intercepting proxy, because with it on anyone able to intercept that connection can capture the token.
+
 ### EventBridge rule: ecr-push-trigger-scanner
 
 Matches all successful ECR push events in the account:
@@ -90,17 +94,27 @@ Shared by both Lambdas. One consolidated inline policy (`registry-scanner`) gran
 - `logs:CreateLogGroup/Stream/PutLogEvents` - write to both Lambda log groups
 - `ecr:GetAuthorizationToken` + read actions - generate and use ECR tokens
 - `ecs:RunTask`, `ecs:DescribeTasks` - launch and monitor scanner tasks
-- `iam:PassRole` - pass `ecsTaskExecutionRole` to the Fargate task
+- `iam:PassRole` - pass `sysdig-registry-scanner-task-role` to the Fargate task (only to `ecs-tasks.amazonaws.com`)
 - `lambda:InvokeFunction` - trigger Lambda invokes the orchestrator
 
-### ecsTaskExecutionRole
+### sysdig-registry-scanner-task-role
 
-Used by the Fargate task. AWS-managed policies:
+Used by the Fargate task as both its task role and its execution role. It exists only for this
+solution (earlier versions used the shared default `ecsTaskExecutionRole`; see the README migration
+section). AWS-managed policies:
 - `AmazonECSTaskExecutionRolePolicy` - pull images, write CloudWatch logs
 - `AmazonEC2ContainerRegistryReadOnly` - read ECR images
 
-Custom inline policy:
-- `secretsmanager:GetSecretValue` - read the Sysdig API token at task start
+Inline policies:
+- `read-sysdig-token` - `secretsmanager:GetSecretValue` on the exact ARN of the Sysdig token secret
+- `create-scanner-log-group` - `logs:CreateLogGroup` on `/ecs/Sysdig-Registry-Scanner` (the task definition
+  sets `awslogs-create-group`, which the managed policy does not cover)
+- `assume-self` - `sts:AssumeRole` on the role itself
+
+Trust policy: `ecs-tasks.amazonaws.com`, plus the role itself. The scanner assumes the role named in
+`REGISTRYSCANNER_CONFIG_AWS_MANAGEMENTACCOUNTROLEARN`, which is this same role, and IAM requires a role
+to trust itself before it can do that. `deploy.sh` replaces this trust policy on every run, because the
+role belongs to this solution.
 
 ## Network
 

@@ -20,7 +20,7 @@ ECR push -> EventBridge -> ecr-push-trigger -> run-registry-scan -> Fargate task
 
 - AWS account with admin access
 - AWS CLI configured
-- `jq` installed
+- `jq` and `zip` installed (`curl` as well, for `update-test.sh`)
 - Sysdig Secure account and API token
 - A VPC subnet with outbound internet access (public subnet, or private with NAT gateway)
 - A security group allowing outbound HTTPS (port 443)
@@ -54,7 +54,14 @@ SECURITY_GROUP_ID="sg-xxxxxxxxx"    # must allow outbound HTTPS (443)
 SYSDIG_API_URL="https://app.au1.sysdig.com"
 SECRET_NAME="SECURE_API_TOKEN"
 CLUSTER_NAME="Sysdig-Fargate-Test-Cluster"
+SECURE_SKIPTLS="false"              # "true" turns off certificate checks to Sysdig (see below)
 ```
+
+`deploy.sh` refuses to run while `SUBNET_ID` or `SECURITY_GROUP_ID` are still the placeholder values.
+
+`SECURE_SKIPTLS` controls whether the scanner verifies Sysdig's TLS certificate when it sends
+your API token. Leave it `false`. Set it to `true` only if the task runs behind a proxy that
+intercepts TLS, because with `true` anyone able to intercept that connection can capture the token.
 
 Sysdig region URLs:
 - AU: `https://app.au1.sysdig.com`
@@ -99,7 +106,7 @@ This invokes the orchestrator Lambda directly with a specific image and waits fo
 | Resource | Name |
 |---|---|
 | IAM role (Lambdas) | `lambda-registry-scanner-role` |
-| IAM role (Fargate task) | `ecsTaskExecutionRole` |
+| IAM role (Fargate task) | `sysdig-registry-scanner-task-role` |
 | Lambda | `run-registry-scan` (timeout: 900s) |
 | Lambda | `ecr-push-trigger` (timeout: 60s) |
 | ECS cluster | `Sysdig-Fargate-Test-Cluster` (configurable) |
@@ -234,9 +241,30 @@ deploy it:
 
 The test registers a copy of the live task definition under a separate family
 (`Sysdig-Registry-Scanner-Test`) with only the image changed, so the running scanner is
-untouched. If the scan succeeds you are asked whether to deploy; answering yes updates the
-image in the template and runs `deploy.sh`. Review and commit the template change
-afterwards. Use `--version job-0.12.3` to test a specific tag. Needs `aws`, `jq` and `curl`.
+untouched. If the scan succeeds you are asked whether to deploy. Answering yes registers
+the exact definition that was tested as a new revision of the live family (the scanner
+Lambdas use the latest revision, so new scans use it straight away) and updates the image in
+`ecs/task-definition-template.json`. `deploy.sh` is not run. Review and commit the template
+change afterwards. Use `--version job-0.12.3` to test a specific tag, and `--skip-tls false`
+to test with certificate verification switched on. Needs `aws`, `jq` and `curl`.
+
+## Migrating from ecsTaskExecutionRole
+
+Earlier versions of this tool ran the scanner as the shared default role
+`ecsTaskExecutionRole` and added permissions to it. The scanner now has its own role,
+`sysdig-registry-scanner-task-role`, so nothing else in your account is affected.
+
+Re-running `./deploy.sh` creates the new role and moves the scanner onto it. It does not
+touch `ecsTaskExecutionRole`. If that role was used by an earlier version, it still has
+these items, which you can remove if nothing else needs them:
+
+- the inline policies `assume-self`, `create-scanner-log-group` and `read-sysdig-token`
+- the statement in its trust policy that lets the role assume itself
+- `AmazonEC2ContainerRegistryReadOnly`, if you did not have it attached before
+
+`deploy.sh` prints a note when it finds the old inline policies. Earlier versions also
+replaced the whole trust policy of `ecsTaskExecutionRole`; if it trusted anything besides
+`ecs-tasks.amazonaws.com`, restore those entries.
 
 ## Repository structure
 

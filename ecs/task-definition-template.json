@@ -1,7 +1,7 @@
 {
   "family": "Sysdig-Registry-Scanner",
-  "taskRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole",
-  "executionRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/{{TASK_ROLE}}",
+  "executionRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/{{TASK_ROLE}}",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "1024",
@@ -19,7 +19,7 @@
         },
         {
           "name": "REGISTRYSCANNER_CONFIG_AWS_MANAGEMENTACCOUNTROLEARN",
-          "value": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole"
+          "value": "arn:aws:iam::{{ACCOUNT_ID}}:role/{{TASK_ROLE}}"
         },
         {
           "name": "SHOW_USAGE",
@@ -43,7 +43,7 @@
         },
         {
           "name": "REGISTRYSCANNER_SECURE_SKIPTLS",
-          "value": "true"
+          "value": "{{SECURE_SKIPTLS}}"
         },
         {
           "name": "REGISTRYSCANNER_CRONJOB_SCHEDULE",

@@ -43,7 +43,7 @@
       "Sid": "PassTaskRole",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::*:role/ecsTaskExecutionRole",
+      "Resource": "arn:aws:iam::*:role/{{TASK_ROLE}}",
       "Condition": {
         "StringLike": {
           "iam:PassedToService": "ecs-tasks.amazonaws.com"
